@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, createCloseAccountInstruction } from '@solana/spl-token';
 
-// Standard rent-exempt reserve for a token account (approx, varies slightly by cluster)
+const HELIUS = 'https://mainnet.helius-rpc.com/?api-key=3abd0284-8633-4617-87ce-b40398be951b';
 const TOKEN_ACCOUNT_RENT_LAMPORTS = 2039280;
 
 interface ReclaimableAccount {
@@ -11,23 +11,22 @@ interface ReclaimableAccount {
   lamports: number;
 }
 
-export function useReclaimableRent(connection: Connection, owner: PublicKey | null) {
+export function useReclaimableRent(pubkeyStr: string | null | undefined) {
   const [accounts, setAccounts] = useState<ReclaimableAccount[]>([]);
   const [loading, setLoading] = useState(false);
 
   const scan = useCallback(async () => {
-    if (!owner) return;
+    if (!pubkeyStr) return;
     setLoading(true);
     try {
+      const connection = new Connection(HELIUS, 'confirmed');
+      const owner = new PublicKey(pubkeyStr);
       const resp = await connection.getParsedTokenAccountsByOwner(owner, {
         programId: TOKEN_PROGRAM_ID,
       });
 
       const empties = resp.value
-        .filter((a) => {
-          const info = a.account.data.parsed.info;
-          return info.tokenAmount.uiAmount === 0;
-        })
+        .filter((a) => a.account.data.parsed.info.tokenAmount.uiAmount === 0)
         .map((a) => ({
           pubkey: a.pubkey,
           mint: a.account.data.parsed.info.mint as string,
@@ -35,27 +34,26 @@ export function useReclaimableRent(connection: Connection, owner: PublicKey | nu
         }));
 
       setAccounts(empties);
+    } catch (e) {
+      console.log('reclaim scan error', e);
     } finally {
       setLoading(false);
     }
-  }, [connection, owner]);
+  }, [pubkeyStr]);
 
-  useEffect(() => {
-    scan();
-  }, [scan]);
+  useEffect(() => { scan(); }, [scan]);
 
   const totalLamports = accounts.reduce((sum, a) => sum + a.lamports, 0);
 
   const buildCloseTransaction = useCallback(() => {
-    if (!owner || accounts.length === 0) return null;
+    if (!pubkeyStr || accounts.length === 0) return null;
+    const owner = new PublicKey(pubkeyStr);
     const tx = new Transaction();
     accounts.forEach((a) => {
-      tx.add(
-        createCloseAccountInstruction(a.pubkey, owner, owner, [], TOKEN_PROGRAM_ID)
-      );
+      tx.add(createCloseAccountInstruction(a.pubkey, owner, owner, [], TOKEN_PROGRAM_ID));
     });
     return tx;
-  }, [accounts, owner]);
+  }, [accounts, pubkeyStr]);
 
   return {
     accounts,
